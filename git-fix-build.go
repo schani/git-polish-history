@@ -186,8 +186,7 @@ func setHead(st state, commit *git.Commit) error {
 		return err
 	}
 
-	// FIXME: append commit description to log message
-	msg := "fix-build"
+	msg := fmt.Sprintf("fix-build: %s", commit.Summary())
 
 	if st.branchName == "" {
 		return st.repo.SetHeadDetached(commit.Id(), sig, msg)
