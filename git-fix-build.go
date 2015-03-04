@@ -45,6 +45,20 @@ func openRepo() (*git.Repository, error) {
 	return repo, err
 }
 
+func getCommitFromName(repo *git.Repository, name string) (*git.Commit, error) {
+	obj, err := repo.RevparseSingle(name)
+	if err != nil {
+		return nil, err
+	}
+
+	commit, err := repo.LookupCommit(obj.Id())
+	if err != nil {
+		return nil, err
+	}
+
+	return commit, nil
+}
+
 func readState(repo *git.Repository) (state, error) {
 	buildCommandBytes, err := ioutil.ReadFile(stateFile(repo, buildCommandFilename))
 	if err != nil {
@@ -59,12 +73,7 @@ func readState(repo *git.Repository) (state, error) {
 	commitIds := strings.Split(string(commitsBytes), "\n")
 	commits := []*git.Commit{}
 	for _, commitId := range commitIds {
-		obj, err := repo.RevparseSingle(commitId)
-		if err != nil {
-			return state{}, err
-		}
-
-		commit, err := repo.LookupCommit(obj.Id())
+		commit, err := getCommitFromName(repo, commitId)
 		if err != nil {
 			return state{}, err
 		}
@@ -380,14 +389,24 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 			os.Exit(1)
 		}
 	} else {
-		startCommit := c.Args()[0]
+		startCommitName := c.Args()[0]
 
 		if err == nil {
 			fmt.Fprintf(os.Stderr, "Error: State is present.\n")
 			os.Exit(1)
 		}
 
-		commits, err := getCommits(repo, startCommit)
+		commits, err := getCommits(repo, startCommitName)
+		if err != nil {
+			return err
+		}
+
+		startCommit, err := getCommitFromName(repo, startCommitName)
+		if err != nil {
+			return err
+		}
+
+		err = checkout(repo, startCommit)
 		if err != nil {
 			return err
 		}
