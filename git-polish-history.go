@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+const toolName = "polish-history"
+
 type state struct {
 	repo         *git.Repository
 	branchName   string
@@ -26,7 +28,7 @@ const (
 )
 
 func stateDir(repo *git.Repository) string {
-	return path.Join(repo.Path(), "fix-build")
+	return path.Join(repo.Path(), toolName)
 }
 
 func stateFile(repo *git.Repository, name string) string {
@@ -186,7 +188,7 @@ func setHead(st state, commit *git.Commit, how string) error {
 		return err
 	}
 
-	msg := fmt.Sprintf("fix-build (%s): %s", how, commit.Summary())
+	msg := fmt.Sprintf("%s (%s): %s", toolName, how, commit.Summary())
 
 	if st.branchName == "" {
 		return st.repo.SetHeadDetached(commit.Id(), sig, msg)
@@ -524,8 +526,8 @@ func actionRunner(action func(*cli.Context) error) func(*cli.Context) {
 
 func main() {
 	app := cli.NewApp()
-	app.Name = "git-fix-build"
-	app.Usage = "fix builds by amending"
+	app.Name = fmt.Sprintf("git-%s", toolName)
+	app.Usage = "Reform history by fixing the build on each commit"
 	app.Author = "Mark Probst"
 	app.Email = "mark.probst@gmail.com"
 	app.Commands = []cli.Command{
