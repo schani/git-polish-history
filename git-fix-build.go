@@ -14,6 +14,7 @@ import (
 
 type state struct {
 	repo         *git.Repository
+	branchName   string
 	buildCommand string
 	commits      []*git.Commit
 }
@@ -21,6 +22,7 @@ type state struct {
 const (
 	buildCommandFilename = "build-command"
 	commitsFilename      = "commits"
+	branchFilename       = "branch"
 )
 
 func stateDir(repo *git.Repository) string {
@@ -59,6 +61,32 @@ func getCommitFromName(repo *git.Repository, name string) (*git.Commit, error) {
 	return commit, nil
 }
 
+func branchName(repo *git.Repository) (string, error) {
+	ref, err := repo.Head()
+	if err != nil {
+		return "", err
+	}
+
+	if !ref.IsBranch() {
+		return "", nil
+	}
+
+	for ref.Type() == git.ReferenceSymbolic {
+		ref, err = repo.LookupReference(ref.SymbolicTarget())
+		if err != nil {
+			return "", err
+		}
+	}
+
+	if ref.Type() != git.ReferenceOid {
+		return "", errors.New("Unknown reference type")
+	}
+
+	fmt.Printf("branch is %s\n", ref.Name())
+
+	return ref.Name(), nil
+}
+
 func readState(repo *git.Repository) (state, error) {
 	buildCommandBytes, err := ioutil.ReadFile(stateFile(repo, buildCommandFilename))
 	if err != nil {
@@ -66,6 +94,11 @@ func readState(repo *git.Repository) (state, error) {
 	}
 
 	commitsBytes, err := ioutil.ReadFile(stateFile(repo, commitsFilename))
+	if err != nil {
+		return state{}, err
+	}
+
+	branchBytes, err := ioutil.ReadFile(stateFile(repo, branchFilename))
 	if err != nil {
 		return state{}, err
 	}
@@ -81,7 +114,7 @@ func readState(repo *git.Repository) (state, error) {
 		commits = append(commits, commit)
 	}
 
-	return state{repo: repo, buildCommand: string(buildCommandBytes), commits: commits}, nil
+	return state{repo: repo, branchName: string(branchBytes), buildCommand: string(buildCommandBytes), commits: commits}, nil
 }
 
 func writeState(st state) error {
@@ -93,6 +126,11 @@ func writeState(st state) error {
 	}
 
 	err = ioutil.WriteFile(stateFile(st.repo, buildCommandFilename), []byte(st.buildCommand), 0644)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(stateFile(st.repo, branchFilename), []byte(st.branchName), 0644)
 	if err != nil {
 		return err
 	}
@@ -142,24 +180,52 @@ func hasChanges(repo *git.Repository) (bool, error) {
 	return numDeltas != 0, nil
 }
 
-func setHead(repo *git.Repository, commit *git.Commit) error {
-	// FIXME: append commit description to log message
+func setHead(st state, commit *git.Commit) error {
 	// FIXME: use proper signature
-	return repo.SetHeadDetached(commit.Id(), commit.Author(), "fix-build")
+	sig := commit.Author()
+	// FIXME: append commit description to log message
+	msg := "fix-build"
+
+	if st.branchName == "" {
+		return st.repo.SetHeadDetached(commit.Id(), sig, msg)
+	} else {
+		currentBranch, err := branchName(st.repo)
+		if err != nil {
+			return err
+		}
+
+		if st.branchName != currentBranch {
+			fmt.Fprintf(os.Stderr, "We're not on the original branch `%s` anymore.\n", st.branchName)
+			os.Exit(1)
+		}
+
+		ref, err := st.repo.LookupReference(st.branchName)
+		if err != nil {
+			return err
+		}
+
+		ref, err = ref.SetTarget(commit.Id(), sig, msg)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+
 }
 
-func checkout(repo *git.Repository, commit *git.Commit) error {
+func checkout(st state, commit *git.Commit) error {
 	tree, err := commit.Tree()
 	if err != nil {
 		return err
 	}
 
-	err = repo.CheckoutTree(tree, &git.CheckoutOpts{Strategy: git.CheckoutSafe})
+	err = st.repo.CheckoutTree(tree, &git.CheckoutOpts{Strategy: git.CheckoutSafe})
 	if err != nil {
 		return err
 	}
 
-	err = setHead(repo, commit)
+	err = setHead(st, commit)
 	if err != nil {
 		return err
 	}
@@ -250,7 +316,7 @@ func work(st state) error {
 		if headCommitObj.Id().String() == parent.Id().String() {
 			fmt.Printf("*** checking out %s\n", commit.Id())
 
-			err = checkout(st.repo, commit)
+			err = checkout(st, commit)
 			if err != nil {
 				return err
 			}
@@ -306,7 +372,7 @@ func work(st state) error {
 				return err
 			}
 
-			err = setHead(st.repo, newCommit)
+			err = setHead(st, newCommit)
 			if err != nil {
 				return err
 			}
@@ -396,6 +462,11 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 			os.Exit(1)
 		}
 
+		branch, err := branchName(repo)
+		if err != nil {
+			return err
+		}
+
 		commits, err := getCommits(repo, startCommitName)
 		if err != nil {
 			return err
@@ -406,12 +477,12 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 			return err
 		}
 
-		err = checkout(repo, startCommit)
+		st = state{repo: repo, branchName: branch, buildCommand: c.String("build"), commits: commits}
+
+		err = checkout(st, startCommit)
 		if err != nil {
 			return err
 		}
-
-		st = state{repo: repo, buildCommand: c.String("build"), commits: commits}
 	}
 
 	err = work(st)
