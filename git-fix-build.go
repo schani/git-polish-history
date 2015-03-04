@@ -375,8 +375,8 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 			return errors.New(fmt.Sprintf("Could not read state: %v\n", err))
 		}
 
-		if c.IsSet("build") {
-			st.buildCommand = c.String("build")
+		if c.GlobalIsSet("build") {
+			st.buildCommand = c.GlobalString("build")
 		}
 
 		builds, err := tryBuild(st)
