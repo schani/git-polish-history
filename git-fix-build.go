@@ -235,7 +235,7 @@ func work(st state) error {
 		st.commits = st.commits[:len(st.commits)-1]
 
 		if commit.ParentCount() != 1 {
-			return errors.New(fmt.Sprintf("Commit %s should have exactly one parent.", commit.Id()))
+			return fmt.Errorf("Commit %s should have exactly one parent.", commit.Id())
 		}
 		parent := commit.Parent(0)
 
@@ -372,7 +372,7 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 	st, err := readState(repo)
 	if doContinue {
 		if err != nil {
-			return errors.New(fmt.Sprintf("Could not read state: %v\n", err))
+			return fmt.Errorf("Could not read state: %v\n", err)
 		}
 
 		if c.GlobalIsSet("build") {
