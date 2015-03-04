@@ -180,13 +180,13 @@ func hasChanges(repo *git.Repository) (bool, error) {
 	return numDeltas != 0, nil
 }
 
-func setHead(st state, commit *git.Commit) error {
+func setHead(st state, commit *git.Commit, how string) error {
 	sig, err := st.repo.DefaultSignature()
 	if err != nil {
 		return err
 	}
 
-	msg := fmt.Sprintf("fix-build: %s", commit.Summary())
+	msg := fmt.Sprintf("fix-build (%s): %s", how, commit.Summary())
 
 	if st.branchName == "" {
 		return st.repo.SetHeadDetached(commit.Id(), sig, msg)
@@ -227,7 +227,7 @@ func checkout(st state, commit *git.Commit) error {
 		return err
 	}
 
-	err = setHead(st, commit)
+	err = setHead(st, commit, "checkout")
 	if err != nil {
 		return err
 	}
@@ -374,7 +374,7 @@ func work(st state) error {
 				return err
 			}
 
-			err = setHead(st, newCommit)
+			err = setHead(st, newCommit, "cherry-pick")
 			if err != nil {
 				return err
 			}
