@@ -403,19 +403,30 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 	return nil
 }
 
-func appAction(c *cli.Context) {
-	err := appActualAction(c, false)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+func appAction(c *cli.Context) error {
+	return appActualAction(c, false)
 }
 
-func continueAction(c *cli.Context) {
-	err := appActualAction(c, true)
+func continueAction(c *cli.Context) error {
+	return appActualAction(c, true)
+}
+
+func abortAction(c *cli.Context) error {
+	repo, err := openRepo()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
+	}
+
+	return deleteState(repo)
+}
+
+func actionRunner(action func(*cli.Context) error) func(*cli.Context) {
+	return func(c *cli.Context) {
+		err := action(c)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -429,7 +440,12 @@ func main() {
 		{
 			Name:   "continue",
 			Usage:  "Continue current run",
-			Action: continueAction,
+			Action: actionRunner(continueAction),
+		},
+		{
+			Name:   "abort",
+			Usage:  "Abort current run",
+			Action: actionRunner(abortAction),
 		},
 	}
 	app.Flags = []cli.Flag{
@@ -439,7 +455,7 @@ func main() {
 			Usage: "Build command",
 		},
 	}
-	app.Action = appAction
+	app.Action = actionRunner(appAction)
 
 	app.Run(os.Args)
 }
