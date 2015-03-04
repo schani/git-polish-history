@@ -326,9 +326,7 @@ func work(st state) error {
 	return nil
 }
 
-func appActualAction(c *cli.Context) error {
-	doContinue := c.Bool("continue")
-
+func appActualAction(c *cli.Context, doContinue bool) error {
 	if doContinue {
 		if len(c.Args()) != 0 {
 			cli.ShowAppHelp(c)
@@ -399,7 +397,15 @@ func appActualAction(c *cli.Context) error {
 }
 
 func appAction(c *cli.Context) {
-	err := appActualAction(c)
+	err := appActualAction(c, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func continueAction(c *cli.Context) {
+	err := appActualAction(c, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -412,12 +418,14 @@ func main() {
 	app.Usage = "fix builds by amending"
 	app.Author = "Mark Probst"
 	app.Email = "mark.probst@gmail.com"
-	// FIXME: make `continue` a command
-	app.Flags = []cli.Flag{
-		cli.BoolFlag{
-			Name:  "continue",
-			Usage: "Continue current run",
+	app.Commands = []cli.Command{
+		{
+			Name:   "continue",
+			Usage:  "Continue current run",
+			Action: continueAction,
 		},
+	}
+	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:  "build",
 			Value: "make -j4",
