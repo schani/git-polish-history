@@ -256,7 +256,7 @@ func getCommits(repo *git.Repository, startName string) ([]*git.Commit, error) {
 	walk.Sorting(git.SortTopological)
 
 	commits := []*git.Commit{}
-	var innerErr error = nil
+	var innerErr error
 	err = walk.Iterate(func(commit *git.Commit) bool {
 		if commit.Id().String() == startObjHash {
 			return false
