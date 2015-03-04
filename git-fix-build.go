@@ -101,6 +101,10 @@ func writeState(st state) error {
 	return nil
 }
 
+func deleteState(repo *git.Repository) error {
+	return os.RemoveAll(stateDir(repo))
+}
+
 func hasChanges(repo *git.Repository) (bool, error) {
 	if repo.State() != git.RepositoryStateNone {
 		return true, nil
@@ -320,8 +324,11 @@ func work(st state) error {
 	}
 
 	fmt.Printf("done")
-	//FIXME: implement
-	//deleteState ()
+
+	err := deleteState(st.repo)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
