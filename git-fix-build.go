@@ -181,8 +181,11 @@ func hasChanges(repo *git.Repository) (bool, error) {
 }
 
 func setHead(st state, commit *git.Commit) error {
-	// FIXME: use proper signature
-	sig := commit.Author()
+	sig, err := st.repo.DefaultSignature()
+	if err != nil {
+		return err
+	}
+
 	// FIXME: append commit description to log message
 	msg := "fix-build"
 
