@@ -459,8 +459,6 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 			os.Exit(1)
 		}
 	} else {
-		startCommitName := c.Args()[0]
-
 		if err == nil {
 			fmt.Fprintf(os.Stderr, "Error: State is present.\n")
 			os.Exit(1)
@@ -470,6 +468,8 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 		if err != nil {
 			return err
 		}
+
+		startCommitName := c.Args()[0]
 
 		commits, err := getCommits(repo, startCommitName)
 		if err != nil {
