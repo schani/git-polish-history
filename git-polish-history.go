@@ -325,7 +325,6 @@ func getCommits(repo *git.Repository, startName string) ([]*git.Commit, error) {
 }
 
 func tryBuild(st state) (bool, error) {
-	// FIXME: build directory
 	cmd := exec.Command("/bin/sh", "-c", st.buildCommand)
 	cmd.Dir = st.buildDirectory
 	cmd.Stdout = os.Stdout
@@ -568,7 +567,12 @@ or abort it with
 	return nil
 }
 
-func appAction(c *cli.Context) error {
+func appAction(c *cli.Context) {
+	cli.ShowAppHelp(c)
+	os.Exit(1)
+}
+
+func startAction(c *cli.Context) error {
 	return appActualAction(c, false)
 }
 
@@ -629,6 +633,11 @@ func main() {
 	app.Email = "mark.probst@gmail.com"
 	app.Commands = []cli.Command{
 		{
+			Name:   "start",
+			Usage:  "Start from a given commit",
+			Action: actionRunner(startAction),
+		},
+		{
 			Name:   "continue",
 			Usage:  "Continue current run",
 			Action: actionRunner(continueAction),
@@ -646,7 +655,7 @@ func main() {
 			Usage: "Build command",
 		},
 	}
-	app.Action = actionRunner(appAction)
+	app.Action = appAction
 
 	app.Run(os.Args)
 }
