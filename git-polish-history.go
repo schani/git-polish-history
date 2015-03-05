@@ -200,6 +200,7 @@ func deleteState(repo *git.Repository) error {
 	return os.RemoveAll(stateDir(repo))
 }
 
+// FIXME: use status to speed this up?
 func hasChanges(repo *git.Repository) (bool, error) {
 	if repo.State() != git.RepositoryStateNone {
 		return true, nil
@@ -264,7 +265,7 @@ func setHead(st state, commit *git.Commit, how string) error {
 
 }
 
-func checkout(st state, commit *git.Commit) error {
+func checkout(st state, commit *git.Commit, how string) error {
 	tree, err := commit.Tree()
 	if err != nil {
 		return err
@@ -275,7 +276,7 @@ func checkout(st state, commit *git.Commit) error {
 		return err
 	}
 
-	err = setHead(st, commit, "checkout")
+	err = setHead(st, commit, how)
 	if err != nil {
 		return err
 	}
@@ -367,7 +368,7 @@ func work(st state) error {
 		if headCommitObj.Id().String() == parent.Id().String() {
 			fmt.Printf("*** checking out %s\n", commit.Id())
 
-			err = checkout(st, commit)
+			err = checkout(st, commit, "checkout")
 			if err != nil {
 				return err
 			}
@@ -542,7 +543,7 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 			commits:        commits,
 		}
 
-		err = checkout(st, startCommit)
+		err = checkout(st, startCommit, "start")
 		if err != nil {
 			return err
 		}
@@ -564,11 +565,32 @@ func continueAction(c *cli.Context) error {
 	return appActualAction(c, true)
 }
 
-// FIXME: move back to original commit
 func abortAction(c *cli.Context) error {
 	repo, err := openRepo()
 	if err != nil {
 		return err
+	}
+
+	st, err := readState(repo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not read current state: %v\nIs there really a polish-history in progress?\n", err)
+		os.Exit(1)
+	}
+
+	changes, err := hasChanges(repo)
+	if err != nil {
+		return err
+	}
+	if changes {
+		fmt.Fprintf(os.Stderr, "There are local changes - refusing abort.  Please stash or remove them.\n")
+		os.Exit(1)
+	}
+
+	if len(st.commits) > 0 {
+		err = checkout(st, st.commits[0], "abort")
+		if err != nil {
+			return err
+		}
 	}
 
 	return deleteState(repo)
