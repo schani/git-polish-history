@@ -628,6 +628,7 @@ func actionRunner(action func(*cli.Context) error) func(*cli.Context) {
 func main() {
 	app := cli.NewApp()
 	app.Name = fmt.Sprintf("git-%s", toolName)
+	app.Version = "0.1"
 	app.Usage = "Reform history by fixing the build on each commit"
 	app.Author = "Mark Probst"
 	app.Email = "mark.probst@gmail.com"
