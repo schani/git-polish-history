@@ -99,8 +99,6 @@ func branchName(repo *git.Repository) (string, error) {
 		return "", nil
 	}
 
-	fmt.Printf("branch is %s\n", ref.Name())
-
 	return ref.Name(), nil
 }
 
@@ -246,7 +244,7 @@ func setHead(st state, commit *git.Commit, how string) error {
 		}
 
 		if st.branchName != currentBranch {
-			fmt.Fprintf(os.Stderr, "We're not on the original branch `%s` anymore.\n", st.branchName)
+			fmt.Fprintf(os.Stderr, "Error: We're not on the original branch `%s` anymore.\n", st.branchName)
 			os.Exit(1)
 		}
 
@@ -291,7 +289,6 @@ func getCommits(repo *git.Repository, startName string) ([]*git.Commit, error) {
 	}
 
 	startObjHash := startObj.Id().String()
-	fmt.Printf("start is %s\n", startObjHash)
 
 	walk, err := repo.Walk()
 	if err != nil {
@@ -315,7 +312,6 @@ func getCommits(repo *git.Repository, startName string) ([]*git.Commit, error) {
 			return false
 		}
 		commits = append(commits, commit)
-		fmt.Printf("Commit %s\n", commit.Id())
 		return true
 	})
 	if innerErr != nil {
@@ -366,14 +362,14 @@ func work(st state) error {
 		// can just checkout out that commit.  Otherwise we
 		// have to cherry-pick it.
 		if headCommitObj.Id().String() == parent.Id().String() {
-			fmt.Printf("*** checking out %s\n", commit.Id())
+			fmt.Fprintf(os.Stderr, "Checking out %s\n", commit.Id())
 
 			err = checkout(st, commit, "checkout")
 			if err != nil {
 				return err
 			}
 		} else {
-			fmt.Printf("*** cherry-picking %s\n", commit.Id())
+			fmt.Fprintf(os.Stderr, "Cherry-picking %s\n", commit.Id())
 
 			opts, err := git.DefaultCherrypickOptions()
 			if err != nil {
@@ -450,7 +446,7 @@ func work(st state) error {
 		}
 	}
 
-	fmt.Printf("done")
+	fmt.Fprintf(os.Stderr, "Done.\n")
 
 	err := deleteState(st.repo)
 	if err != nil {
@@ -483,7 +479,9 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 		return err
 	}
 	if changes {
-		fmt.Fprintf(os.Stderr, "Error: Working directory or index has changes\n")
+		fmt.Fprintf(os.Stderr, `Working directory or index has changes.
+Please stash, commit, or remove them.
+`)
 		os.Exit(1)
 	}
 
@@ -509,12 +507,25 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 		}
 
 		if !builds {
-			fmt.Fprintf(os.Stderr, "Build failed.\n")
+			fmt.Fprintf(os.Stderr, `The build failed.
+Please fix it by amending the last commit.
+Then continue with
+
+    git polish-history continue
+`)
 			os.Exit(1)
 		}
 	} else {
 		if err == nil {
-			fmt.Fprintf(os.Stderr, "Error: State is present.\n")
+			fmt.Fprintf(os.Stderr, `Error: There is already a polish-history in progress.
+If you want to continue with it, use
+
+    git polish-history continue
+
+or abort it with
+
+    git polish-history abort
+`)
 			os.Exit(1)
 		}
 
@@ -573,7 +584,9 @@ func abortAction(c *cli.Context) error {
 
 	st, err := readState(repo)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not read current state: %v\nIs there really a polish-history in progress?\n", err)
+		fmt.Fprintf(os.Stderr, `Error: Could not read current state: %v
+Is there really a polish-history in progress?
+`, err)
 		os.Exit(1)
 	}
 
@@ -582,7 +595,9 @@ func abortAction(c *cli.Context) error {
 		return err
 	}
 	if changes {
-		fmt.Fprintf(os.Stderr, "There are local changes - refusing abort.  Please stash or remove them.\n")
+		fmt.Fprintf(os.Stderr, `There are local changes - refusing abort.
+Please stash or remove them.
+`)
 		os.Exit(1)
 	}
 
