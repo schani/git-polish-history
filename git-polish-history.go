@@ -65,25 +65,38 @@ func getCommitFromName(repo *git.Repository, name string) (*git.Commit, error) {
 	return commit, nil
 }
 
-func branchName(repo *git.Repository) (string, error) {
+func dereferenceHead(repo *git.Repository) (*git.Reference, error) {
 	ref, err := repo.Head()
+	if err != nil {
+		return nil, err
+	}
+
+	if !ref.IsBranch() {
+		return ref, nil
+	}
+
+	for ref.Type() == git.ReferenceSymbolic {
+		ref, err = repo.LookupReference(ref.SymbolicTarget())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if ref.Type() != git.ReferenceOid {
+		return nil, errors.New("Unknown reference type")
+	}
+
+	return ref, nil
+}
+
+func branchName(repo *git.Repository) (string, error) {
+	ref, err := dereferenceHead(repo)
 	if err != nil {
 		return "", err
 	}
 
 	if !ref.IsBranch() {
 		return "", nil
-	}
-
-	for ref.Type() == git.ReferenceSymbolic {
-		ref, err = repo.LookupReference(ref.SymbolicTarget())
-		if err != nil {
-			return "", err
-		}
-	}
-
-	if ref.Type() != git.ReferenceOid {
-		return "", errors.New("Unknown reference type")
 	}
 
 	fmt.Printf("branch is %s\n", ref.Name())
