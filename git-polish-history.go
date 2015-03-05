@@ -495,8 +495,8 @@ Please stash, commit, or remove them.
 			return fmt.Errorf("Could not read state: %v\n", err)
 		}
 
-		if c.GlobalIsSet("build") {
-			st.buildCommand = c.GlobalString("build")
+		if c.GlobalIsSet("test") {
+			st.buildCommand = c.GlobalString("test")
 			st.buildDirectory = cwd
 		}
 
@@ -548,7 +548,7 @@ or abort it with
 		st = state{
 			repo:           repo,
 			branchName:     branch,
-			buildCommand:   c.String("build"),
+			buildCommand:   c.String("test"),
 			buildDirectory: cwd,
 			commits:        commits,
 		}
@@ -650,9 +650,9 @@ func main() {
 	}
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
-			Name:  "build",
+			Name:  "test",
 			Value: "make -j4",
-			Usage: "Build command",
+			Usage: "Build/test command",
 		},
 	}
 	app.Action = appAction
