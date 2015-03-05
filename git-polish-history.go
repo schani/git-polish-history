@@ -15,16 +15,18 @@ import (
 const toolName = "polish-history"
 
 type state struct {
-	repo         *git.Repository
-	branchName   string
-	buildCommand string
-	commits      []*git.Commit
+	repo           *git.Repository
+	branchName     string
+	buildCommand   string
+	buildDirectory string
+	commits        []*git.Commit
 }
 
 const (
-	buildCommandFilename = "build-command"
-	commitsFilename      = "commits"
-	branchFilename       = "branch"
+	buildCommandFilename   = "build-command"
+	buildDirectoryFilename = "build-directory"
+	commitsFilename        = "commits"
+	branchFilename         = "branch"
 )
 
 func stateDir(repo *git.Repository) string {
@@ -89,23 +91,41 @@ func branchName(repo *git.Repository) (string, error) {
 	return ref.Name(), nil
 }
 
+func readStateFile(repo *git.Repository, name string) (string, error) {
+	bytes, err := ioutil.ReadFile(stateFile(repo, name))
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
+}
+
+func writeStateFile(repo *git.Repository, name string, contents string) error {
+	return ioutil.WriteFile(stateFile(repo, name), []byte(contents), 0644)
+
+}
+
 func readState(repo *git.Repository) (state, error) {
-	buildCommandBytes, err := ioutil.ReadFile(stateFile(repo, buildCommandFilename))
+	buildCommand, err := readStateFile(repo, buildCommandFilename)
 	if err != nil {
 		return state{}, err
 	}
 
-	commitsBytes, err := ioutil.ReadFile(stateFile(repo, commitsFilename))
+	buildDirectory, err := readStateFile(repo, buildDirectoryFilename)
 	if err != nil {
 		return state{}, err
 	}
 
-	branchBytes, err := ioutil.ReadFile(stateFile(repo, branchFilename))
+	commitsString, err := readStateFile(repo, commitsFilename)
 	if err != nil {
 		return state{}, err
 	}
 
-	commitIds := strings.Split(string(commitsBytes), "\n")
+	branchName, err := readStateFile(repo, branchFilename)
+	if err != nil {
+		return state{}, err
+	}
+
+	commitIds := strings.Split(commitsString, "\n")
 	commits := []*git.Commit{}
 	for _, commitId := range commitIds {
 		commit, err := getCommitFromName(repo, commitId)
@@ -116,7 +136,15 @@ func readState(repo *git.Repository) (state, error) {
 		commits = append(commits, commit)
 	}
 
-	return state{repo: repo, branchName: string(branchBytes), buildCommand: string(buildCommandBytes), commits: commits}, nil
+	st := state{
+		repo:           repo,
+		branchName:     branchName,
+		buildCommand:   buildCommand,
+		buildDirectory: buildDirectory,
+		commits:        commits,
+	}
+
+	return st, nil
 }
 
 func writeState(st state) error {
@@ -127,12 +155,17 @@ func writeState(st state) error {
 		}
 	}
 
-	err = ioutil.WriteFile(stateFile(st.repo, buildCommandFilename), []byte(st.buildCommand), 0644)
+	err = writeStateFile(st.repo, buildCommandFilename, st.buildCommand)
 	if err != nil {
 		return err
 	}
 
-	err = ioutil.WriteFile(stateFile(st.repo, branchFilename), []byte(st.branchName), 0644)
+	err = writeStateFile(st.repo, buildDirectoryFilename, st.buildDirectory)
+	if err != nil {
+		return err
+	}
+
+	err = writeStateFile(st.repo, branchFilename, st.branchName)
 	if err != nil {
 		return err
 	}
@@ -142,7 +175,7 @@ func writeState(st state) error {
 		commitIds = append(commitIds, commit.Id().String())
 	}
 
-	err = ioutil.WriteFile(stateFile(st.repo, commitsFilename), []byte(strings.Join(commitIds, "\n")), 0644)
+	err = writeStateFile(st.repo, commitsFilename, strings.Join(commitIds, "\n"))
 	if err != nil {
 		return err
 	}
@@ -284,6 +317,7 @@ func getCommits(repo *git.Repository, startName string) ([]*git.Commit, error) {
 func tryBuild(st state) (bool, error) {
 	// FIXME: build directory
 	cmd := exec.Command("/bin/sh", "-c", st.buildCommand)
+	cmd.Dir = st.buildDirectory
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
@@ -439,6 +473,11 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 		os.Exit(1)
 	}
 
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
 	st, err := readState(repo)
 	if doContinue {
 		if err != nil {
@@ -447,6 +486,7 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 
 		if c.GlobalIsSet("build") {
 			st.buildCommand = c.GlobalString("build")
+			st.buildDirectory = cwd
 		}
 
 		builds, err := tryBuild(st)
@@ -481,7 +521,13 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 			return err
 		}
 
-		st = state{repo: repo, branchName: branch, buildCommand: c.String("build"), commits: commits}
+		st = state{
+			repo:           repo,
+			branchName:     branch,
+			buildCommand:   c.String("build"),
+			buildDirectory: cwd,
+			commits:        commits,
+		}
 
 		err = checkout(st, startCommit)
 		if err != nil {
@@ -505,6 +551,7 @@ func continueAction(c *cli.Context) error {
 	return appActualAction(c, true)
 }
 
+// FIXME: move back to original commit
 func abortAction(c *cli.Context) error {
 	repo, err := openRepo()
 	if err != nil {
