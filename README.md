@@ -40,3 +40,5 @@ refuse to work.
 Checking for local changes is very slow.  I've tried using the status
 API instead of the diff API, but it doesn't work on a particular
 repository I'm working on, and I'm not yet sure why.
+
+It will commit empty cherry-picks.
