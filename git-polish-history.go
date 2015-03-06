@@ -548,7 +548,7 @@ or abort it with
 		st = state{
 			repo:           repo,
 			branchName:     branch,
-			buildCommand:   c.String("test"),
+			buildCommand:   c.GlobalString("test"),
 			buildDirectory: cwd,
 			commits:        commits,
 		}
