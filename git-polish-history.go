@@ -112,7 +112,6 @@ func readStateFile(repo *git.Repository, name string) (string, error) {
 
 func writeStateFile(repo *git.Repository, name string, contents string) error {
 	return ioutil.WriteFile(stateFile(repo, name), []byte(contents), 0644)
-
 }
 
 func readState(repo *git.Repository) (state, error) {
@@ -386,7 +385,15 @@ func work(st state) error {
 			}
 
 			if index.HasConflicts() {
-				fmt.Fprintf(os.Stderr, "Cherry-pick conflicts.\n")
+				fmt.Fprintf(os.Stderr, `Cherry-pick failed with conflicts.
+Please fix them and commit with
+
+    git cherry-pick --continue
+
+then continue with
+
+    git polish-history continue
+`)
 				err = writeState(st)
 				if err != nil {
 					return err
