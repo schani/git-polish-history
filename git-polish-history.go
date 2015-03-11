@@ -29,12 +29,20 @@ const (
 	branchFilename         = "branch"
 )
 
+func gitFile(repo *git.Repository, name string) string {
+	return path.Join(repo.Path(), name)
+}
+
 func stateDir(repo *git.Repository) string {
-	return path.Join(repo.Path(), toolName)
+	return gitFile(repo, toolName)
 }
 
 func stateFile(repo *git.Repository, name string) string {
 	return path.Join(stateDir(repo), name)
+}
+
+func workdirFile(repo *git.Repository, name string) string {
+	return path.Join(repo.Workdir(), name)
 }
 
 func openRepo() (*git.Repository, error) {
@@ -114,6 +122,27 @@ func writeStateFile(repo *git.Repository, name string, contents string) error {
 	return ioutil.WriteFile(stateFile(repo, name), []byte(contents), 0644)
 }
 
+func readCommitsFromFile(repo *git.Repository, path string) ([]*git.Commit, error) {
+	bytes, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	str := strings.TrimSpace(string(bytes))
+
+	commitIds := strings.Fields(str)
+	commits := []*git.Commit{}
+	for _, commitId := range commitIds {
+		commit, err := getCommitFromName(repo, commitId)
+		if err != nil {
+			return nil, err
+		}
+
+		commits = append(commits, commit)
+	}
+
+	return commits, nil
+}
+
 func readState(repo *git.Repository) (state, error) {
 	buildCommand, err := readStateFile(repo, buildCommandFilename)
 	if err != nil {
@@ -125,25 +154,14 @@ func readState(repo *git.Repository) (state, error) {
 		return state{}, err
 	}
 
-	commitsString, err := readStateFile(repo, commitsFilename)
-	if err != nil {
-		return state{}, err
-	}
-
 	branchName, err := readStateFile(repo, branchFilename)
 	if err != nil {
 		return state{}, err
 	}
 
-	commitIds := strings.Split(commitsString, "\n")
-	commits := []*git.Commit{}
-	for _, commitId := range commitIds {
-		commit, err := getCommitFromName(repo, commitId)
-		if err != nil {
-			return state{}, err
-		}
-
-		commits = append(commits, commit)
+	commits, err := readCommitsFromFile(repo, stateFile(repo, commitsFilename))
+	if err != nil {
+		return state{}, err
 	}
 
 	st := state{
@@ -197,33 +215,218 @@ func deleteState(repo *git.Repository) error {
 	return os.RemoveAll(stateDir(repo))
 }
 
-// FIXME: use status to speed this up?
-func hasChanges(repo *git.Repository) (bool, error) {
-	if repo.State() != git.RepositoryStateNone {
-		return true, nil
+func filesFromDiff(diff *git.Diff, fileSet map[string]bool) error {
+	numDeltas, err := diff.NumDeltas()
+	if err != nil {
+		return err
 	}
 
+	for i := 0; i < numDeltas; i++ {
+		delta, err := diff.GetDelta(i)
+		if err != nil {
+			return err
+		}
+
+		fileSet[delta.OldFile.Path] = true
+		fileSet[delta.NewFile.Path] = true
+	}
+
+	return nil
+}
+
+func changedFiles(repo *git.Repository) ([]string, error) {
 	obj, err := repo.RevparseSingle("HEAD^{tree}")
 	if err != nil {
-		return true, err
+		return nil, err
 	}
 
 	tree, err := repo.LookupTree(obj.Id())
 	if err != nil {
-		return true, err
+		return nil, err
 	}
 
-	diff, err := repo.DiffTreeToWorkdir(tree, nil)
+	/*
+		opts, err := git.DefaultDiffOptions()
+		if err != nil {
+			return nil, err
+		}
+	*/
+
+	fileSet := map[string]bool{}
+
+	diff, err := repo.DiffTreeToWorkdirWithIndex(tree, nil)
+	if err != nil {
+		return nil, err
+	}
+	err = filesFromDiff(diff, fileSet)
+	if err != nil {
+		return nil, err
+	}
+
+	diff, err = repo.DiffTreeToWorkdir(tree, nil)
+	if err != nil {
+		return nil, err
+	}
+	err = filesFromDiff(diff, fileSet)
+	if err != nil {
+		return nil, err
+	}
+
+	diff, err = repo.DiffIndexToWorkdir(nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	err = filesFromDiff(diff, fileSet)
+	if err != nil {
+		return nil, err
+	}
+
+	files := []string{}
+	for file, _ := range fileSet {
+		files = append(files, file)
+	}
+
+	return files, nil
+}
+
+// FIXME: use status to speed this up?
+func hasChanges(repo *git.Repository) (bool, error) {
+	files, err := changedFiles(repo)
 	if err != nil {
 		return true, err
 	}
 
-	numDeltas, err := diff.NumDeltas()
-	if err != nil {
-		return true, err
+	if len(files) > 0 {
+		fmt.Fprintf(os.Stderr, "Changes in working directory and/or index:\n\n")
+		for _, file := range files {
+			fmt.Fprintf(os.Stderr, "\t%s\n", file)
+		}
 	}
 
-	return numDeltas != 0, nil
+	return len(files) > 0, nil
+}
+
+func makeCommit(st state, commit *git.Commit) (*git.Commit, error) {
+	index, err := st.repo.Index()
+	if err != nil {
+		return nil, err
+	}
+
+	treeId, err := index.WriteTree()
+	if err != nil {
+		return nil, err
+	}
+
+	tree, err := st.repo.LookupTree(treeId)
+	if err != nil {
+		return nil, err
+	}
+
+	committer, err := st.repo.DefaultSignature()
+	if err != nil {
+		return nil, err
+	}
+
+	headCommitObj, err := st.repo.RevparseSingle("HEAD")
+	if err != nil {
+		return nil, err
+	}
+
+	headCommit, err := st.repo.LookupCommit(headCommitObj.Id())
+	if err != nil {
+		return nil, err
+	}
+
+	var newCommitId *git.Oid
+
+	if commit != nil {
+		newCommitId, err = st.repo.CreateCommit("", commit.Author(), committer, commit.Message(), tree, headCommit)
+	} else {
+		newCommitId, err = headCommit.Amend("", headCommit.Author(), committer, headCommit.Message(), tree)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	newCommit, err := st.repo.LookupCommit(newCommitId)
+	if err != nil {
+		return nil, err
+	}
+
+	err = setHead(st, newCommit, "cherry-pick")
+	if err != nil {
+		return nil, err
+	}
+
+	err = st.repo.StateCleanup()
+	if err != nil {
+		return nil, err
+	}
+
+	return newCommit, nil
+}
+
+func addOrRemove(repo *git.Repository, path string) error {
+	index, err := repo.Index()
+	if err != nil {
+		return err
+	}
+
+	_, err = os.Stat(workdirFile(repo, path))
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Removing %s\n", path)
+			return index.RemoveByPath(path)
+		}
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Adding %s\n", path)
+	return index.AddByPath(path)
+}
+
+func handleChanges(st state) error {
+	files, err := changedFiles(st.repo)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		err = addOrRemove(st.repo, file)
+		if err != nil {
+			return err
+		}
+	}
+
+	switch st.repo.State() {
+	case git.RepositoryStateNone:
+		// Amend the last commit
+		_, err = makeCommit(st, nil)
+		if err != nil {
+			return err
+		}
+	case git.RepositoryStateCherrypick:
+		// Commit the cherry-pick commit
+		commits, err := readCommitsFromFile(st.repo, gitFile(st.repo, "CHERRY_PICK_HEAD"))
+		if err != nil {
+			return err
+		}
+		if len(commits) != 1 {
+			return errors.New("Invalid CHERRY_PICK_HEAD file")
+		}
+		_, err = makeCommit(st, commits[0])
+		if err != nil {
+			return err
+		}
+
+		err = st.repo.StateCleanup()
+		if err != nil {
+			return err
+		}
+	default:
+		return errors.New("Invalid repository state")
+	}
+
+	return nil
 }
 
 func setHead(st state, commit *git.Commit, how string) error {
@@ -401,40 +604,7 @@ then continue with
 				return nil
 			}
 
-			treeId, err := index.WriteTree()
-			if err != nil {
-				return err
-			}
-
-			tree, err := st.repo.LookupTree(treeId)
-			if err != nil {
-				return err
-			}
-
-			headCommit, err := st.repo.LookupCommit(headCommitObj.Id())
-			if err != nil {
-				return err
-			}
-
-			newCommitId, err := st.repo.CreateCommit("", commit.Author(), commit.Committer(), commit.Message(), tree, headCommit)
-			if err != nil {
-				return err
-			}
-
-			newCommit, err := st.repo.LookupCommit(newCommitId)
-			if err != nil {
-				return err
-			}
-
-			err = setHead(st, newCommit, "cherry-pick")
-			if err != nil {
-				return err
-			}
-
-			err = st.repo.StateCleanup()
-			if err != nil {
-				return err
-			}
+			makeCommit(st, commit)
 		}
 
 		builds, err := tryBuild(st)
@@ -485,10 +655,10 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 		return err
 	}
 	if changes {
-		fmt.Fprintf(os.Stderr, `Working directory or index has changes.
-Please stash, commit, or remove them.
-`)
-		os.Exit(1)
+		if !c.Bool("automatic") {
+			fmt.Fprintf(os.Stderr, "\nPlease stash, commit, or remove them.\n")
+			os.Exit(1)
+		}
 	}
 
 	cwd, err := os.Getwd()
@@ -520,6 +690,11 @@ Then continue with
     git polish-history continue
 `)
 			os.Exit(1)
+		}
+
+		if changes {
+			fmt.Fprintf(os.Stderr, "\nAutomatically committing them.\n")
+			handleChanges(st)
 		}
 	} else {
 		if err == nil {
@@ -606,7 +781,7 @@ Is there really a polish-history in progress?
 		return err
 	}
 	if changes {
-		fmt.Fprintf(os.Stderr, `There are local changes - refusing abort.
+		fmt.Fprintf(os.Stderr, `Refusing to abort.
 Please stash or remove them.
 `)
 		os.Exit(1)
@@ -649,6 +824,12 @@ func main() {
 			Name:   "continue",
 			Usage:  "Continue current run",
 			Action: actionRunner(continueAction),
+			Flags: []cli.Flag{
+				cli.BoolFlag{
+					Name:  "automatic,a",
+					Usage: "Automatically amend or finish cherry-pick",
+				},
+			},
 		},
 		{
 			Name:   "abort",

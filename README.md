@@ -28,7 +28,10 @@ you'd amend the last commit.  Once you're done, you do
     git polish-history continue
 
 and the process continues.  It will stop again whenever a commit fails
-the test, when a merge conflict occurs, or when it's done.
+the test, when a merge conflict occurs, or when it's done.  If you
+want it to do the committing of your changes automatically, use
+
+    git polish-history continue --automatic
 
 ## Shortcomings
 
