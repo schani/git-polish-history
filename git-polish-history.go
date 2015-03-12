@@ -306,10 +306,14 @@ func hasChanges(repo *git.Repository) (bool, error) {
 	return len(files) > 0, nil
 }
 
-func makeCommit(st state, commit *git.Commit) (*git.Commit, error) {
+func makeCommit(st state, commit *git.Commit, cleanupConflicts bool) (*git.Commit, error) {
 	index, err := st.repo.Index()
 	if err != nil {
 		return nil, err
+	}
+
+	if cleanupConflicts {
+		index.CleanupConflicts()
 	}
 
 	treeId, err := index.WriteTree()
@@ -366,13 +370,8 @@ func makeCommit(st state, commit *git.Commit) (*git.Commit, error) {
 	return newCommit, nil
 }
 
-func addOrRemove(repo *git.Repository, path string) error {
-	index, err := repo.Index()
-	if err != nil {
-		return err
-	}
-
-	_, err = os.Stat(workdirFile(repo, path))
+func addOrRemove(repo *git.Repository, index *git.Index, path string) error {
+	_, err := os.Stat(workdirFile(repo, path))
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "Removing %s\n", path)
@@ -390,8 +389,13 @@ func handleChanges(st state) error {
 		return err
 	}
 
+	index, err := st.repo.Index()
+	if err != nil {
+		return err
+	}
+
 	for _, file := range files {
-		err = addOrRemove(st.repo, file)
+		err = addOrRemove(st.repo, index, file)
 		if err != nil {
 			return err
 		}
@@ -400,7 +404,7 @@ func handleChanges(st state) error {
 	switch st.repo.State() {
 	case git.RepositoryStateNone:
 		// Amend the last commit
-		_, err = makeCommit(st, nil)
+		_, err = makeCommit(st, nil, false)
 		if err != nil {
 			return err
 		}
@@ -413,7 +417,7 @@ func handleChanges(st state) error {
 		if len(commits) != 1 {
 			return errors.New("Invalid CHERRY_PICK_HEAD file")
 		}
-		_, err = makeCommit(st, commits[0])
+		_, err = makeCommit(st, commits[0], true)
 		if err != nil {
 			return err
 		}
@@ -604,7 +608,7 @@ then continue with
 				return nil
 			}
 
-			makeCommit(st, commit)
+			makeCommit(st, commit, false)
 		}
 
 		builds, err := tryBuild(st)
