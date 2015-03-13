@@ -1,6 +1,7 @@
 # git-polish-history
 
-A tool to interactively rewrite history to fix build or test errors.
+A tool for interactively rewriting history to fix the build or test
+suite failures.
 
 ## Introduction
 
