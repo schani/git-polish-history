@@ -40,9 +40,3 @@ Right now only linear histories are supported.  That is, if there is
 some merging going on between your current branch and the commit you
 want to start the polishing at, `git-polish-history` will complain and
 refuse to work.
-
-Checking for local changes is very slow.  I've tried using the status
-API instead of the diff API, but it doesn't work on a particular
-repository I'm working on, and I'm not yet sure why.
-
-It will commit empty cherry-picks.
