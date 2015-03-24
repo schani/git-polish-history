@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/codegangsta/cli"
-	"github.com/schani/git2go"
+	"github.com/schani/git"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -15,11 +15,11 @@ import (
 const toolName = "polish-history"
 
 type state struct {
-	repo           *git.Repository
+	repo           *git.Repo
 	branchName     string
 	buildCommand   string
 	buildDirectory string
-	commits        []*git.Commit
+	commits        []git.Oid
 }
 
 const (
@@ -29,88 +29,35 @@ const (
 	branchFilename         = "branch"
 )
 
-func gitFile(repo *git.Repository, name string) string {
-	return path.Join(repo.Path(), name)
+func gitFile(repo *git.Repo, name string) string {
+	return path.Join(repo.Path, ".git", name)
 }
 
-func stateDir(repo *git.Repository) string {
+func stateDir(repo *git.Repo) string {
 	return gitFile(repo, toolName)
 }
 
-func stateFile(repo *git.Repository, name string) string {
+func stateFile(repo *git.Repo, name string) string {
 	return path.Join(stateDir(repo), name)
 }
 
-func workdirFile(repo *git.Repository, name string) string {
-	return path.Join(repo.Workdir(), name)
+func workdirFile(repo *git.Repo, name string) string {
+	return path.Join(repo.Path, name)
 }
 
-func openRepo() (*git.Repository, error) {
-	repoPath, err := git.Discover(".", false, []string{"/"})
-	if err != nil {
-		return nil, err
-	}
-
-	repo, err := git.OpenRepository(repoPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return repo, err
-}
-
-func getCommitFromName(repo *git.Repository, name string) (*git.Commit, error) {
-	obj, err := repo.RevparseSingle(name)
-	if err != nil {
-		return nil, err
-	}
-
-	commit, err := repo.LookupCommit(obj.Id())
-	if err != nil {
-		return nil, err
-	}
-
-	return commit, nil
-}
-
-func dereferenceHead(repo *git.Repository) (*git.Reference, error) {
-	ref, err := repo.Head()
-	if err != nil {
-		return nil, err
-	}
-
-	if !ref.IsBranch() {
-		return ref, nil
-	}
-
-	for ref.Type() == git.ReferenceSymbolic {
-		ref, err = repo.LookupReference(ref.SymbolicTarget())
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if ref.Type() != git.ReferenceOid {
-		return nil, errors.New("Unknown reference type")
-	}
-
-	return ref, nil
-}
-
-func branchName(repo *git.Repository) (string, error) {
-	ref, err := dereferenceHead(repo)
+func branchName(repo *git.Repo) (string, error) {
+	name, err := repo.RevParseAbbrev("HEAD")
 	if err != nil {
 		return "", err
 	}
-
-	if !ref.IsBranch() {
+	if name == "HEAD" {
 		return "", nil
 	}
 
-	return ref.Name(), nil
+	return name, nil
 }
 
-func readStateFile(repo *git.Repository, name string) (string, error) {
+func readStateFile(repo *git.Repo, name string) (string, error) {
 	bytes, err := ioutil.ReadFile(stateFile(repo, name))
 	if err != nil {
 		return "", err
@@ -118,11 +65,11 @@ func readStateFile(repo *git.Repository, name string) (string, error) {
 	return string(bytes), nil
 }
 
-func writeStateFile(repo *git.Repository, name string, contents string) error {
+func writeStateFile(repo *git.Repo, name string, contents string) error {
 	return ioutil.WriteFile(stateFile(repo, name), []byte(contents), 0644)
 }
 
-func readCommitsFromFile(repo *git.Repository, path string) ([]*git.Commit, error) {
+func readCommitsFromFile(repo *git.Repo, path string) ([]git.Oid, error) {
 	bytes, err := ioutil.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -130,20 +77,15 @@ func readCommitsFromFile(repo *git.Repository, path string) ([]*git.Commit, erro
 	str := strings.TrimSpace(string(bytes))
 
 	commitIds := strings.Fields(str)
-	commits := []*git.Commit{}
+	commits := []git.Oid{}
 	for _, commitId := range commitIds {
-		commit, err := getCommitFromName(repo, commitId)
-		if err != nil {
-			return nil, err
-		}
-
-		commits = append(commits, commit)
+		commits = append(commits, git.Oid(commitId))
 	}
 
 	return commits, nil
 }
 
-func readState(repo *git.Repository) (state, error) {
+func readState(repo *git.Repo) (state, error) {
 	buildCommand, err := readStateFile(repo, buildCommandFilename)
 	if err != nil {
 		return state{}, err
@@ -200,7 +142,7 @@ func writeState(st state) error {
 
 	commitIds := []string{}
 	for _, commit := range st.commits {
-		commitIds = append(commitIds, commit.Id().String())
+		commitIds = append(commitIds, string(commit))
 	}
 
 	err = writeStateFile(st.repo, commitsFilename, strings.Join(commitIds, "\n"))
@@ -211,320 +153,134 @@ func writeState(st state) error {
 	return nil
 }
 
-func deleteState(repo *git.Repository) error {
+func deleteState(repo *git.Repo) error {
 	return os.RemoveAll(stateDir(repo))
 }
 
-func filesFromDiff(diff *git.Diff, fileSet map[string]bool) error {
-	numDeltas, err := diff.NumDeltas()
-	if err != nil {
-		return err
-	}
-
-	for i := 0; i < numDeltas; i++ {
-		delta, err := diff.GetDelta(i)
-		if err != nil {
-			return err
-		}
-
-		fileSet[delta.OldFile.Path] = true
-		fileSet[delta.NewFile.Path] = true
-	}
-
-	return nil
-}
-
-func changedFiles(repo *git.Repository) ([]string, error) {
-	obj, err := repo.RevparseSingle("HEAD^{tree}")
-	if err != nil {
-		return nil, err
-	}
-
-	tree, err := repo.LookupTree(obj.Id())
-	if err != nil {
-		return nil, err
-	}
-
-	/*
-		opts, err := git.DefaultDiffOptions()
-		if err != nil {
-			return nil, err
-		}
-	*/
-
-	fileSet := map[string]bool{}
-
-	diff, err := repo.DiffTreeToWorkdirWithIndex(tree, nil)
-	if err != nil {
-		return nil, err
-	}
-	err = filesFromDiff(diff, fileSet)
-	if err != nil {
-		return nil, err
-	}
-
-	diff, err = repo.DiffTreeToWorkdir(tree, nil)
-	if err != nil {
-		return nil, err
-	}
-	err = filesFromDiff(diff, fileSet)
-	if err != nil {
-		return nil, err
-	}
-
-	diff, err = repo.DiffIndexToWorkdir(nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	err = filesFromDiff(diff, fileSet)
+func filesToBeStaged(repo *git.Repo) ([]string, error) {
+	statuses, err := repo.Status()
 	if err != nil {
 		return nil, err
 	}
 
 	files := []string{}
-	for file, _ := range fileSet {
-		files = append(files, file)
+	for _, status := range statuses {
+		if status.WorkTreeStatus != git.StatusFlagUnmodified {
+			if status.NewPath != "" {
+				return nil, errors.New("Don't know how to handle worktree rename")
+			}
+			files = append(files, status.OldPath)
+		}
 	}
 
 	return files, nil
 }
 
-// FIXME: use status to speed this up?
-func hasChanges(repo *git.Repository) (bool, error) {
-	files, err := changedFiles(repo)
+func hasChanges(repo *git.Repo) (bool, error) {
+	// FIXME: We can actually use commit -a to do this when we're
+	// committing.
+
+	// FIXME: We're doing Status here as well as in
+	// filesToBeStaged.  Only do it once.
+	statuses, err := repo.Status()
 	if err != nil {
 		return true, err
 	}
 
-	if len(files) > 0 {
-		fmt.Fprintf(os.Stderr, "Changes in working directory and/or index:\n\n")
-		for _, file := range files {
-			fmt.Fprintf(os.Stderr, "\t%s\n", file)
+	if len(statuses) == 0 {
+		return false, nil
+	}
+
+	fmt.Fprintf(os.Stderr, "Changes in working directory and/or index:\n\n")
+	for _, status := range statuses {
+		if status.NewPath != "" {
+			fmt.Fprintf(os.Stderr, "\t%s -> %s\n", status.OldPath, status.NewPath)
+		} else {
+			fmt.Fprintf(os.Stderr, "\t%s\n", status.OldPath)
 		}
 	}
 
-	return len(files) > 0, nil
-}
-
-func makeCommit(st state, commit *git.Commit, cleanupConflicts bool) (*git.Commit, error) {
-	index, err := st.repo.Index()
-	if err != nil {
-		return nil, err
-	}
-
-	if cleanupConflicts {
-		index.CleanupConflicts()
-	}
-
-	treeId, err := index.WriteTree()
-	if err != nil {
-		return nil, err
-	}
-
-	tree, err := st.repo.LookupTree(treeId)
-	if err != nil {
-		return nil, err
-	}
-
-	committer, err := st.repo.DefaultSignature()
-	if err != nil {
-		return nil, err
-	}
-
-	headCommitObj, err := st.repo.RevparseSingle("HEAD")
-	if err != nil {
-		return nil, err
-	}
-
-	headCommit, err := st.repo.LookupCommit(headCommitObj.Id())
-	if err != nil {
-		return nil, err
-	}
-
-	var newCommitId *git.Oid
-
-	if commit != nil {
-		newCommitId, err = st.repo.CreateCommit("", commit.Author(), committer, commit.Message(), tree, headCommit)
-	} else {
-		newCommitId, err = headCommit.Amend("", headCommit.Author(), committer, headCommit.Message(), tree)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	newCommit, err := st.repo.LookupCommit(newCommitId)
-	if err != nil {
-		return nil, err
-	}
-
-	err = setHead(st, newCommit, "cherry-pick")
-	if err != nil {
-		return nil, err
-	}
-
-	err = st.repo.StateCleanup()
-	if err != nil {
-		return nil, err
-	}
-
-	return newCommit, nil
-}
-
-func addOrRemove(repo *git.Repository, index *git.Index, path string) error {
-	_, err := os.Stat(workdirFile(repo, path))
-	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Removing %s\n", path)
-			return index.RemoveByPath(path)
-		}
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "Adding %s\n", path)
-	return index.AddByPath(path)
+	return true, nil
 }
 
 func handleChanges(st state) error {
-	files, err := changedFiles(st.repo)
-	if err != nil {
-		return err
-	}
-
-	index, err := st.repo.Index()
+	files, err := filesToBeStaged(st.repo)
 	if err != nil {
 		return err
 	}
 
 	for _, file := range files {
-		err = addOrRemove(st.repo, index, file)
+		err = st.repo.Add(file)
 		if err != nil {
 			return err
 		}
 	}
 
-	switch st.repo.State() {
-	case git.RepositoryStateNone:
-		// Amend the last commit
-		_, err = makeCommit(st, nil, false)
-		if err != nil {
-			return err
-		}
-	case git.RepositoryStateCherrypick:
-		// Commit the cherry-pick commit
-		commits, err := readCommitsFromFile(st.repo, gitFile(st.repo, "CHERRY_PICK_HEAD"))
-		if err != nil {
-			return err
-		}
-		if len(commits) != 1 {
-			return errors.New("Invalid CHERRY_PICK_HEAD file")
-		}
-		_, err = makeCommit(st, commits[0], true)
-		if err != nil {
-			return err
-		}
+	repoState, err := st.repo.State()
+	if err != nil {
+		return err
+	}
 
-		err = st.repo.StateCleanup()
+	switch repoState {
+	case git.StateNone:
+		return st.repo.CommitAmend()
+	case git.StateCherryPick:
+		commit, err := st.repo.CherryPickHead()
 		if err != nil {
 			return err
 		}
+		err = st.repo.RemoveGitFile("CHERRY_PICK_HEAD")
+		if err != nil {
+			return err
+		}
+		present, err := st.repo.HasGitFile("COMMIT_EDITMSG")
+		if err != nil {
+			return err
+		}
+		if present {
+			err = st.repo.RemoveGitFile("COMMIT_EDITMSG")
+			if err != nil {
+				return err
+			}
+		}
+		return st.repo.CommitReuse(commit)
 	default:
-		return errors.New("Invalid repository state")
+		return errors.New("Don't know how to handle repository state")
 	}
-
-	return nil
 }
 
-func setHead(st state, commit *git.Commit, how string) error {
-	sig, err := st.repo.DefaultSignature()
-	if err != nil {
-		return err
-	}
-
-	msg := fmt.Sprintf("%s (%s): %s", toolName, how, commit.Summary())
-
-	if st.branchName == "" {
-		return st.repo.SetHeadDetached(commit.Id(), sig, msg)
-	} else {
-		currentBranch, err := branchName(st.repo)
-		if err != nil {
-			return err
-		}
-
-		if st.branchName != currentBranch {
-			fmt.Fprintf(os.Stderr, "Error: We're not on the original branch `%s` anymore.\n", st.branchName)
-			os.Exit(1)
-		}
-
-		ref, err := st.repo.LookupReference(st.branchName)
-		if err != nil {
-			return err
-		}
-
-		ref, err = ref.SetTarget(commit.Id(), sig, msg)
-		if err != nil {
-			return err
-		}
-
-		return nil
-	}
-
+func checkout(st state, commit git.Oid, how string) error {
+	return st.repo.ResetHard(commit)
 }
 
-func checkout(st state, commit *git.Commit, how string) error {
-	tree, err := commit.Tree()
-	if err != nil {
-		return err
-	}
-
-	err = st.repo.CheckoutTree(tree, &git.CheckoutOpts{Strategy: git.CheckoutSafe})
-	if err != nil {
-		return err
-	}
-
-	err = setHead(st, commit, how)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func getCommits(repo *git.Repository, startName string) ([]*git.Commit, error) {
-	startObj, err := repo.RevparseSingle(startName)
+func getCommits(repo *git.Repo, startName string) ([]git.Oid, error) {
+	start, err := repo.RevParse(startName)
 	if err != nil {
 		return nil, err
 	}
 
-	startObjHash := startObj.Id().String()
-
-	walk, err := repo.Walk()
+	current, err := repo.RevParse("HEAD")
 	if err != nil {
 		return nil, err
 	}
 
-	err = walk.PushHead()
-	if err != nil {
-		return nil, err
-	}
-	walk.Sorting(git.SortTopological)
-
-	commits := []*git.Commit{}
-	var innerErr error
-	err = walk.Iterate(func(commit *git.Commit) bool {
-		if commit.Id().String() == startObjHash {
-			return false
+	commits := []git.Oid{}
+	for current != start {
+		parents, err := repo.Parents(current)
+		if err != nil {
+			return nil, err
 		}
-		if commit.ParentCount() != 1 {
-			innerErr = errors.New("Reached a commit with more than one parents")
-			return false
+
+		if len(parents) == 0 {
+			return nil, fmt.Errorf("History does not contain start commit `%s`", startName)
 		}
-		commits = append(commits, commit)
-		return true
-	})
-	if innerErr != nil {
-		return nil, innerErr
-	}
-	if err != nil {
-		return nil, err
+		if len(parents) != 1 {
+			return nil, fmt.Errorf("Cannot handle commits with more than one parent: `%s`", current)
+		}
+
+		commits = append(commits, current)
+
+		current = parents[0]
 	}
 
 	return commits, nil
@@ -553,12 +309,17 @@ func work(st state) error {
 		commit := st.commits[len(st.commits)-1]
 		st.commits = st.commits[:len(st.commits)-1]
 
-		if commit.ParentCount() != 1 {
-			return fmt.Errorf("Commit %s should have exactly one parent.", commit.Id())
+		parents, err := st.repo.Parents(commit)
+		if err != nil {
+			return err
 		}
-		parent := commit.Parent(0)
 
-		headCommitObj, err := st.repo.RevparseSingle("HEAD")
+		if len(parents) != 1 {
+			return fmt.Errorf("Commit `%s` should have exactly one parent.", commit)
+		}
+		parent := parents[0]
+
+		head, err := st.repo.RevParse("HEAD")
 		if err != nil {
 			return err
 		}
@@ -566,32 +327,22 @@ func work(st state) error {
 		// If HEAD is the same as the next commit's parent, we
 		// can just checkout out that commit.  Otherwise we
 		// have to cherry-pick it.
-		if headCommitObj.Id().String() == parent.Id().String() {
-			fmt.Fprintf(os.Stderr, "Checking out %s\n", commit.Id())
+		if head == parent {
+			fmt.Fprintf(os.Stderr, "Checking out %s\n", commit)
 
 			err = checkout(st, commit, "checkout")
 			if err != nil {
 				return err
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Cherry-picking %s\n", commit.Id())
+			fmt.Fprintf(os.Stderr, "Cherry-picking %s\n", commit)
 
-			opts, err := git.DefaultCherrypickOptions()
+			clean, err := st.repo.CherryPick(commit)
 			if err != nil {
 				return err
 			}
 
-			err = st.repo.Cherrypick(commit, opts)
-			if err != nil {
-				return err
-			}
-
-			index, err := st.repo.Index()
-			if err != nil {
-				return err
-			}
-
-			if index.HasConflicts() {
+			if !clean {
 				fmt.Fprintf(os.Stderr, `Cherry-pick failed with conflicts.
 Please fix them and commit with
 
@@ -607,8 +358,6 @@ then continue with
 				}
 				return nil
 			}
-
-			makeCommit(st, commit, false)
 		}
 
 		builds, err := tryBuild(st)
@@ -649,7 +398,7 @@ func appActualAction(c *cli.Context, doContinue bool) error {
 		}
 	}
 
-	repo, err := openRepo()
+	repo, err := git.Repository("")
 	if err != nil {
 		return err
 	}
@@ -698,7 +447,19 @@ Then continue with
 
 		if changes {
 			fmt.Fprintf(os.Stderr, "\nAutomatically committing them.\n")
-			handleChanges(st)
+			err = handleChanges(st)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, `Error: There was a problem committing the changes.
+Please check
+
+    git status
+
+and resolve the issue manually, then continue with
+
+    git polish-history continue
+`)
+				os.Exit(1)
+			}
 		}
 	} else {
 		if err == nil {
@@ -726,7 +487,7 @@ or abort it with
 			return err
 		}
 
-		startCommit, err := getCommitFromName(repo, startCommitName)
+		startCommit, err := repo.RevParse(startCommitName)
 		if err != nil {
 			return err
 		}
@@ -767,7 +528,7 @@ func continueAction(c *cli.Context) error {
 }
 
 func abortAction(c *cli.Context) error {
-	repo, err := openRepo()
+	repo, err := git.Repository("")
 	if err != nil {
 		return err
 	}
@@ -814,7 +575,7 @@ func actionRunner(action func(*cli.Context) error) func(*cli.Context) {
 func main() {
 	app := cli.NewApp()
 	app.Name = fmt.Sprintf("git-%s", toolName)
-	app.Version = "0.1"
+	app.Version = "0.2"
 	app.Usage = "Reform history by fixing the build on each commit"
 	app.Author = "Mark Probst"
 	app.Email = "mark.probst@gmail.com"
