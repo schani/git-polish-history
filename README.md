@@ -36,6 +36,13 @@ want it to do the committing of your changes automatically, use
 
     git polish-history continue --automatic
 
+## Installation
+
+If you're on OS X, get [Homebrew](http://brew.sh/) and do
+
+    brew tap schani/schani
+	brew install git-polish-history
+
 ## Shortcomings
 
 Right now only linear histories are supported.  That is, if there is
