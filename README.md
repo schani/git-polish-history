@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/schani/git-polish-history.svg?branch=master)](https://travis-ci.org/schani/git-polish-history)
+
 # git-polish-history
 
 A tool for interactively rewriting history to fix the build or test
