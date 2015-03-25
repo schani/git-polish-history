@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/codegangsta/cli"
-	"github.com/schani/git"
+	git "github.com/schani/gogit"
 	"io/ioutil"
 	"os"
 	"os/exec"
